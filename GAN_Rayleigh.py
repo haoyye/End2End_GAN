@@ -15,19 +15,6 @@ os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 tf.set_random_seed(100)
 np.random.seed(100)
 
-def KL_estimator(X, Y, k):
-    n, m = len(X), len(Y)
-    d = float(X.shape[1])
-    D = np.log(m / (n - 1))
-    X_neighbourhood = NearestNeighbors(k+1, 10).fit(X)
-    Y_neighbourhood = NearestNeighbors(k, 10).fit(Y)
-    for p1 in X:
-        s1_distances, indices = X_neighbourhood.kneighbors([p1], k+1)
-        s2_distances, indices = Y_neighbourhood.kneighbors([p1], k)
-        rho = s1_distances[0][-1]
-        nu = s2_distances[0][-1]
-        D += (d/n)*np.log(nu/rho)
-    return D
 def generator_conditional(z, conditioning):  # need to change the structure
     z_combine = tf.concat([z, conditioning], 1)
     G_h1 = tf.nn.relu(tf.matmul(z_combine, G_W1) + G_b1)
@@ -120,14 +107,6 @@ G_sample = generator_conditional(Z, Condition)
 D_prob_real, D_logit_real = discriminator_conditional(R_sample, Condition)
 D_prob_fake, D_logit_fake = discriminator_conditional(G_sample, Condition)
 
-#Disc_vars = [v for v in tf.trainable_variables() if v.name.startswith('discriminator')]
-#Gen_vars = [v for v in tf.trainable_variables() if v.name.startswith('generator')]
-
-#D_solver = tf.train.RMSPropOptimizer(learning_rate=1e-4).minimize(D_loss, var_list=theta_D)
-#G_solver = tf.train.RMSPropOptimizer(learning_rate=1e-4).minimize(G_loss, var_list=theta_G)
-
-
-''' WGAN-GP'''
 D_loss = tf.reduce_mean(D_logit_fake) - tf.reduce_mean(D_logit_real)
 G_loss = -1 * tf.reduce_mean(D_logit_fake)
 lambdda = 5
@@ -141,21 +120,6 @@ gradient_penalty = tf.reduce_mean((slopes - 1.0) ** 2)
 D_loss += lambdda * gradient_penalty
 D_solver = tf.train.AdamOptimizer(learning_rate=1e-4, beta1=0.5, beta2=0.9).minimize(D_loss, var_list=theta_D)
 G_solver = tf.train.AdamOptimizer(learning_rate=1e-4, beta1=0.5, beta2=0.9).minimize(G_loss, var_list=theta_G)
-
-'''WGAN with weight clipping'''
-
-'''
-
-D_solver = tf.train.RMSPropOptimizer(learning_rate=1e-4).minimize(D_loss, var_list=Disc_vars)
-G_solver = tf.train.RMSPropOptimizer(learning_rate=1e-4).minimize(G_loss, var_list=Gen_vars)
-
-clip_ops = []
-for var in Disc_vars:
-    clip_bounds = [-.01, .01]
-    clip_ops.append(tf.assign(var, tf.clip_by_value(var, clip_bounds[0], clip_bounds[1])))
-    clip_disc_weights = tf.group(*clip_ops)
-
-'''
 
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
@@ -202,56 +166,6 @@ for it in range(750000):
     if (it + 1) % plot_every == 0:
         save_path = saver.save(sess, './Models/ChannelGAN_model_step_' + str(it) + '.ckpt')
 
-        # Calculate the KL distance
-        def Compute_KL():
-            number = 5000
-            iter_channel = 10
-            distance_list = np.zeros(iter_channel)
-            for channel_idx in range(iter_channel):  # average of 100 channel realization
-                h_r = np.random.normal(scale=np.sqrt(2) / 2)
-                h_i = np.random.normal(scale=np.sqrt(2) / 2)
-                h_r = np.tile(h_r, number)
-                h_i = np.tile(h_i, number)
-                idx = np.random.randint(len(mean_set_QAM))
-                labels_index = np.tile(idx, number)
-                h_complex = h_r + 1j * h_i
-                # labels_index = np.random.choice(len(mean_set_QAM), number)
-                data_t = mean_set_QAM[labels_index]
-                transmit_data = h_complex * data_t
-                # print("shapes", transmit_data.shape, h_complex.shape, data_t.shape)
-                transmit_data = np.hstack((np.real(transmit_data).reshape(len(transmit_data), 1),
-                                           np.imag(transmit_data).reshape(len(transmit_data), 1)))
-                gaussion_random = np.random.multivariate_normal([0, 0], [[0.01, 0], [0, 0.01]], number).astype(
-                    np.float32)
-                received_data = transmit_data + gaussion_random
-                conditioning = np.hstack(
-                    (np.real(data_t).reshape(len(data_t), 1), np.imag(data_t).reshape(len(data_t), 1),
-                     h_r.reshape(len(data_t), 1), h_i.reshape(len(data_t), 1)))/3
-
-                samples_component = sess.run(G_sample,
-                                             feed_dict={Z: sample_Z((number, Z_dim)), Condition: conditioning})
-
-                distance_list[channel_idx] = KL_estimator(samples_component, received_data, 10)
-                if channel_idx%20 ==0:
-                    plt.clf()
-                    plt.plot(samples_component[0:200:10, 0], samples_component[0:200:10, 1], 'k.')
-                    plt.plot(received_data[0:200:10, 0], received_data[0:200:10, 1], 'b*')
-                    plt.savefig(save_fig_path + '/plot_samples_'+str(channel_idx)+'{}.png'.format(str(it).zfill(3)), bbox_inches='tight')
-
-
-
-            return np.mean(distance_list)
-        print("start to calculate KL distance")
-
-
-        KL_distance.append(Compute_KL())
-        iter_check_index.append(it)
-        print("iteration idx", iter_check_index)
-        print("KL_distance", KL_distance)
-        plt.clf()
-        plt.plot(iter_check_index,KL_distance, 'bo-')
-        plt.savefig(save_fig_path + '/plot_{}.png'.format(str(it).zfill(3)), bbox_inches='tight')
-        '''
 
         print("Start Plotting")
         colors = ['b.', 'r+', 'm.', 'c.', 'k.', 'g.', 'y.', 'm.', \
@@ -306,7 +220,7 @@ for it in range(750000):
         plt.savefig(save_fig_path + '/{}.png'.format(str(i).zfill(3)), bbox_inches='tight')
 
         i += 1
-        '''
+
 
 
 
