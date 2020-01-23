@@ -3,8 +3,6 @@ import numpy as np
 import tensorflow as tf
 import matplotlib
 matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import os
 import os
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
@@ -199,116 +197,78 @@ with tf.Session(config=config) as sess:
     start_idx = 0
     print('Start init')
     sess.run(tf.global_variables_initializer())
-    # ===================== Test ===================
-    if load_pretrain_model and tf.train.latest_checkpoint('./AWGN_GAN_MODELS/'):
-        print('Start load')
-        saver.restore(sess, tf.train.latest_checkpoint('./AWGN_GAN_MODELS/'))
-    # EbNodB_range = np.arange(0, 8.5, 0.5)
-    # ber = np.ones(len(EbNodB_range))
-    # for n in range(0, len(EbNodB_range)):
-    #     EbNo = 10.0 ** (EbNodB_range[n] / 10.0)
-    #     ber[n] = 1 - sess.run(accuracy_R,
-    #                           feed_dict={X: test_data, Noise_std: (np.sqrt(1 / (2 * R * EbNo)))})
-    #     print('SNR:', EbNodB_range[n], 'BER:', ber[n])
+    for iteration in range(number_iterations):
+        print("iteration is ", iteration)
+        number_steps_transmitter+= 5000
+        number_steps_receiver += 5000
+        number_steps_channel += 2000
+        ''' =========== Training the Channel Simulator ======== '''
+        for step in range(number_steps_channel):
+            if step % 100 == 0:
+                print("Training ChannelGAN, step is ", step)
+            #start_idx = step * batch_size % N_training
+            #if start_idx + batch_size >= N_training:
+            #    continue
+            #batch_x = data[start_idx:start_idx + int(batch_size / 2), :]
+            batch_x = generate_batch_data(int(batch_size/2))
+            encoded_data = sess.run([E], feed_dict={X: batch_x})
+            random_data = sample_uniformly([int(batch_size / 2), block_length, 2])
+            # print(np.asarray(encoded_data).shape, np.asarray(random_data).shape)
+            input_data = np.concatenate((np.asarray(encoded_data).reshape([int(batch_size / 2), block_length, 2])
+                                         + np.random.normal(0, 0.1, size=([int(batch_size / 2), block_length, 2])),
+                                         random_data), axis=0)
+
+            _, D_loss_curr = sess.run([D_solver, D_loss],
+                                      feed_dict={encodings_uniform_generated: input_data,
+                                                 Z: sample_Z([batch_size, block_length, Z_dim_c]),
+                                                 Noise_std: (np.sqrt(1 / (2 * R * EbNo_train_GAN)))})
+            _, G_loss_curr = sess.run([G_solver, G_loss],
+                                      feed_dict={encodings_uniform_generated: input_data,
+                                                 Z: sample_Z([batch_size, block_length, Z_dim_c]),
+                                                 Noise_std: (np.sqrt(1 / (2 * R * EbNo_train_GAN)))})
+
+        ''' =========== Training the Transmitter ==== '''
+        for step in range(number_steps_transmitter):
+            if step % 100 == 0:
+                print("Training transmitter, step is ", step)
+
+            batch_x = generate_batch_data(batch_size)
+            sess.run(Tx_solver, feed_dict={X: batch_x, Z: sample_Z([batch_size, block_length, Z_dim_c]),
+                                           Noise_std: (np.sqrt(1 / (2 * R * EbNo_train)))
+                                           })
+
+        ''' ========== Training the Receiver ============== '''
+
+        for step in range(number_steps_receiver):
+            if step % 100 == 0:
+                print("Training receiver, step is ", step)
+            batch_x = generate_batch_data(batch_size)
+            sess.run(Rx_solver, feed_dict={X: batch_x, Noise_std: (np.sqrt(1 / (2 * R * EbNo_train)))})
+
+        '''  ----- Testing ----  '''
+
+        loss, acc = sess.run([loss_receiver_R, accuracy_R],
+                             feed_dict={X: batch_x, Noise_std: np.sqrt(1 / (2 * 2 * R * EbNo_train))})
+        print("Real Channel Evaluation:", "Step " + str(step) + ", Minibatch Loss= " + \
+              "{:.4f}".format(loss) + ", Training Accuracy= " + \
+              "{:.3f}".format(acc))
+
+        loss, acc = sess.run([loss_receiver_G, accuracy_G],
+                             feed_dict={X: batch_x, Z:  sample_Z([batch_size, block_length, Z_dim_c]),
+                                        Noise_std: np.sqrt(1 / (2 * 2 * R * EbNo_train))
+                                        })
+        print("Generated Channel Evaluation:", "Step " + str(step) + ", Minibatch Loss= " + \
+              "{:.4f}".format(loss) + ", Training Accuracy= " + \
+              "{:.3f}".format(acc))
 
 
-    EbNodB_range = np.arange(6, 8, 0.5)
-    ber = np.ones(len(EbNodB_range))
-    wer = np.ones(len(EbNodB_range))
-    for n in range(0, len(EbNodB_range)):
-        print('SNR is', EbNodB_range[n])
-        EbNo = 10.0 ** (EbNodB_range[n] / 10.0)
-        ber_list = list()
-        wer_list = list()
-        idx = 0
-        while idx + batch_size < N_test:
-            ber_list.append(1 - sess.run(accuracy_R, feed_dict={X: test_data[idx:idx + batch_size],
-                                                              Noise_std: (np.sqrt(1 / (2 * R * EbNo)))}))
-            wer_list.append(1 - sess.run(WER_R, feed_dict={X: test_data[idx:idx + batch_size],
-                                                         Noise_std: (np.sqrt(1 / (2 * R * EbNo)))}))
-            idx += batch_size
-        # ber[n] = 1 - sess.run(accuracy, feed_dict={X:test_data, Noise_std: (np.sqrt(1/(2*R*EbNo)))})
-        ber[n] = 1 - np.mean(np.asarray(ber_list))
-        wer[n] = 1 - np.mean(np.asarray(wer_list))
-        print('SNR:', EbNodB_range[n], 'BER:', ber[n], wer[n])
-    print('BER:', ber)
-    print('WER', wer)
+        EbNodB_range = np.arange(0, 8.5, 0.5)
+        ber = np.ones(len(EbNodB_range))
+        for n in range(0, len(EbNodB_range)):
+            EbNo = 10.0 ** (EbNodB_range[n] / 10.0)
+            ber[n] = 1 - sess.run(accuracy_R,
+                                  feed_dict={X: test_data, Noise_std: (np.sqrt(1 / (2 * R * EbNo)))})
+            print('SNR:', EbNodB_range[n], 'BER:', ber[n])
 
 
 
-    # for iteration in range(number_iterations):
-    #     print("iteration is ", iteration)
-    #     number_steps_transmitter+= 5000
-    #     number_steps_receiver += 5000
-    #     number_steps_channel += 2000
-    #     ''' =========== Training the Channel Simulator ======== '''
-    #     for step in range(number_steps_channel):
-    #         if step % 100 == 0:
-    #             print("Training ChannelGAN, step is ", step)
-    #         #start_idx = step * batch_size % N_training
-    #         #if start_idx + batch_size >= N_training:
-    #         #    continue
-    #         #batch_x = data[start_idx:start_idx + int(batch_size / 2), :]
-    #         batch_x = generate_batch_data(int(batch_size/2))
-    #         encoded_data = sess.run([E], feed_dict={X: batch_x})
-    #         random_data = sample_uniformly([int(batch_size / 2), block_length, 2])
-    #         # print(np.asarray(encoded_data).shape, np.asarray(random_data).shape)
-    #         input_data = np.concatenate((np.asarray(encoded_data).reshape([int(batch_size / 2), block_length, 2])
-    #                                      + np.random.normal(0, 0.1, size=([int(batch_size / 2), block_length, 2])),
-    #                                      random_data), axis=0)
-    #
-    #         _, D_loss_curr = sess.run([D_solver, D_loss],
-    #                                   feed_dict={encodings_uniform_generated: input_data,
-    #                                              Z: sample_Z([batch_size, block_length, Z_dim_c]),
-    #                                              Noise_std: (np.sqrt(1 / (2 * R * EbNo_train_GAN)))})
-    #         _, G_loss_curr = sess.run([G_solver, G_loss],
-    #                                   feed_dict={encodings_uniform_generated: input_data,
-    #                                              Z: sample_Z([batch_size, block_length, Z_dim_c]),
-    #                                              Noise_std: (np.sqrt(1 / (2 * R * EbNo_train_GAN)))})
-    #
-    #     ''' =========== Training the Transmitter ==== '''
-    #     for step in range(number_steps_transmitter):
-    #         if step % 100 == 0:
-    #             print("Training transmitter, step is ", step)
-    #
-    #         batch_x = generate_batch_data(batch_size)
-    #         sess.run(Tx_solver, feed_dict={X: batch_x, Z: sample_Z([batch_size, block_length, Z_dim_c]),
-    #                                        Noise_std: (np.sqrt(1 / (2 * R * EbNo_train)))
-    #                                        })
-    #
-    #     ''' ========== Training the Receiver ============== '''
-    #
-    #     for step in range(number_steps_receiver):
-    #         if step % 100 == 0:
-    #             print("Training receiver, step is ", step)
-    #         batch_x = generate_batch_data(batch_size)
-    #         sess.run(Rx_solver, feed_dict={X: batch_x, Noise_std: (np.sqrt(1 / (2 * R * EbNo_train)))})
-    #
-    #     '''  ----- Testing ----  '''
-    #
-    #     loss, acc = sess.run([loss_receiver_R, accuracy_R],
-    #                          feed_dict={X: batch_x, Noise_std: np.sqrt(1 / (2 * 2 * R * EbNo_train))})
-    #     print("Real Channel Evaluation:", "Step " + str(step) + ", Minibatch Loss= " + \
-    #           "{:.4f}".format(loss) + ", Training Accuracy= " + \
-    #           "{:.3f}".format(acc))
-    #
-    #     loss, acc = sess.run([loss_receiver_G, accuracy_G],
-    #                          feed_dict={X: batch_x, Z:  sample_Z([batch_size, block_length, Z_dim_c]),
-    #                                     Noise_std: np.sqrt(1 / (2 * 2 * R * EbNo_train))
-    #                                     })
-    #     print("Generated Channel Evaluation:", "Step " + str(step) + ", Minibatch Loss= " + \
-    #           "{:.4f}".format(loss) + ", Training Accuracy= " + \
-    #           "{:.3f}".format(acc))
-    #
-    #     saver.save(sess, './AWGN_GAN_MODELS/AWGN_GAN_Model_step_'+str(iteration)+'.ckpt')
-    #
-    #     EbNodB_range = np.arange(0, 8.5, 0.5)
-    #     ber = np.ones(len(EbNodB_range))
-    #     for n in range(0, len(EbNodB_range)):
-    #         EbNo = 10.0 ** (EbNodB_range[n] / 10.0)
-    #         ber[n] = 1 - sess.run(accuracy_R,
-    #                               feed_dict={X: test_data, Noise_std: (np.sqrt(1 / (2 * R * EbNo)))})
-    #         print('SNR:', EbNodB_range[n], 'BER:', ber[n])
-    #
-    #
-    #
