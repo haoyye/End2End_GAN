@@ -4,8 +4,6 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import os
-from sklearn.neighbors import NearestNeighbors
-
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = '1'
@@ -97,9 +95,6 @@ G_b3 = tf.Variable(tf.zeros(shape=[128]))
 G_W4 = tf.Variable(xavier_init([128, 2]))
 G_b4 = tf.Variable(tf.zeros(shape=[2]))
 theta_G = [G_W1, G_W2, G_W3, G_b1, G_b2, G_b3, G_W4, G_b4]
-save_fig_path = model
-if not os.path.exists(save_fig_path):
-    os.makedirs(save_fig_path)
 R_sample = tf.placeholder(tf.float32, shape=[None, 2])
 Z = tf.placeholder(tf.float32, shape=[None, Z_dim])
 Condition = tf.placeholder(tf.float32, shape=[None, condition_dim])
@@ -130,20 +125,16 @@ if not os.path.exists(save_fig_path):
 i = 0
 plt.figure(figsize=(5, 5))
 plt.plot(data[:1000, 0], data[:1000, 1], 'b.')
-axes = plt.gca()
-axes.set_xlim([-4, 4])
-axes.set_ylim([-4, 4])
-plt.title('True data distribution')
-plt.savefig(save_fig_path + '/real.png', bbox_inches='tight')
+# axes = plt.gca()
+# axes.set_xlim([-4, 4])
+# axes.set_ylim([-4, 4])
+# plt.title('True data distribution')
+# plt.savefig(save_fig_path + '/real.png', bbox_inches='tight')
 np_samples = []
 plot_every = 1000
 plt.figure(figsize=(5, 5))
 xmax = 4
 saver = tf.train.Saver()
-KL_test_step = 1
-
-KL_distance = []
-iter_check_index = []
 for it in range(750000):
     start_idx = it * batch_size % data_size
     if start_idx + batch_size >= len(data):
@@ -161,7 +152,6 @@ for it in range(750000):
     _, G_loss_curr = sess.run([G_solver, G_loss],
                               feed_dict={R_sample: X_mb, Z: sample_Z((batch_size, Z_dim)), Condition: one_hot_labels_mb})
 
-    #save_path = saver.save(sess, './Models/ChannelGAN_model_step_' + str(it) + '.ckpt')
 
     if (it + 1) % plot_every == 0:
         save_path = saver.save(sess, './Models/ChannelGAN_model_step_' + str(it) + '.ckpt')
