@@ -2,13 +2,8 @@ from __future__ import division
 import numpy as np
 import tensorflow as tf
 import matplotlib
-matplotlib.use('Agg')
-import os
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
-# This file aims to build an end2end communication system in AWGN channels using convolution layers.
-# I hope that the performance may be similar to the E2E training with explicit models
 
+matplotlib.use('Agg')
 def generator_conditional(z, conditioning):  # Convolution Generator
     with tf.variable_scope("generator", reuse=tf.AUTO_REUSE):
         z_combine = tf.concat([z, conditioning], -1)
@@ -103,6 +98,7 @@ def generate_batch_data(batch_size):
     start_idx += batch_size
     return batch_x
 
+
 """ Start of the Main function """
 
 ''' Building the Graph'''
@@ -120,7 +116,7 @@ Noise_std = tf.placeholder(tf.float32, shape=[])
 G_sample = generator_conditional(Z, E)
 R_sample = gaussian_noise_layer(E, Noise_std)
 print("shapes G and R,", G_sample, R_sample)
-R_decodings_logit, R_decodings_prob  = decoding(R_sample)
+R_decodings_logit, R_decodings_prob = decoding(R_sample)
 G_decodings_logit, G_decodings_prob = decoding(G_sample)
 
 encodings_uniform_generated = tf.placeholder(tf.float32, shape=[None, block_length, 2])
@@ -134,20 +130,15 @@ Gen_vars = [v for v in tf.trainable_variables() if v.name.startswith('generator'
 Tx_vars = [v for v in tf.trainable_variables() if v.name.startswith('encoding')]
 Rx_vars = [v for v in tf.trainable_variables() if v.name.startswith('decoding')]
 
-''' Standard GAN '''
-
-
 D_loss_real = tf.reduce_mean(
     tf.nn.sigmoid_cross_entropy_with_logits(logits=D_logit_real, labels=tf.ones_like(D_logit_real)))
 D_loss_fake = tf.reduce_mean(
     tf.nn.sigmoid_cross_entropy_with_logits(logits=D_logit_fake, labels=tf.zeros_like(D_logit_fake)))
 D_loss = D_loss_real + D_loss_fake
 G_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=D_logit_fake, labels=tf.ones_like(D_logit_fake)))
-# Set up solvers
 
 D_solver = tf.train.AdamOptimizer(learning_rate=1e-4, beta1=0.5).minimize(D_loss, var_list=Disc_vars)
 G_solver = tf.train.AdamOptimizer(learning_rate=1e-4, beta1=0.5).minimize(G_loss, var_list=Gen_vars)
-
 
 loss_receiver_R = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
     logits=R_decodings_logit, labels=X))
@@ -158,9 +149,9 @@ loss_receiver_G = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
 optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
 Tx_solver = optimizer.minimize(loss_receiver_G, var_list=Tx_vars)
 accuracy_R = tf.reduce_mean(tf.cast((tf.abs(R_decodings_prob - X) > 0.5), tf.float32))
-WER_R = 1 - tf.reduce_mean(tf.cast(tf.reduce_all(tf.abs(R_decodings_prob-X) <0.5, 1),tf.float32))
+WER_R = 1 - tf.reduce_mean(tf.cast(tf.reduce_all(tf.abs(R_decodings_prob - X) < 0.5, 1), tf.float32))
 accuracy_G = tf.reduce_mean(tf.cast((tf.abs(G_decodings_prob - X) > 0.5), tf.float32))
-WER_G = 1 - tf.reduce_mean(tf.cast(tf.reduce_all(tf.abs(G_decodings_prob-X) <0.5, 1),tf.float32))
+WER_G = 1 - tf.reduce_mean(tf.cast(tf.reduce_all(tf.abs(G_decodings_prob - X) < 0.5, 1), tf.float32))
 
 init = tf.global_variables_initializer()
 number_steps_receiver = 0
@@ -199,21 +190,17 @@ with tf.Session(config=config) as sess:
     sess.run(tf.global_variables_initializer())
     for iteration in range(number_iterations):
         print("iteration is ", iteration)
-        number_steps_transmitter+= 5000
+        number_steps_transmitter += 5000
         number_steps_receiver += 5000
         number_steps_channel += 2000
         ''' =========== Training the Channel Simulator ======== '''
         for step in range(number_steps_channel):
             if step % 100 == 0:
                 print("Training ChannelGAN, step is ", step)
-            #start_idx = step * batch_size % N_training
-            #if start_idx + batch_size >= N_training:
-            #    continue
-            #batch_x = data[start_idx:start_idx + int(batch_size / 2), :]
-            batch_x = generate_batch_data(int(batch_size/2))
+            batch_x = generate_batch_data(int(batch_size / 2))
             encoded_data = sess.run([E], feed_dict={X: batch_x})
             random_data = sample_uniformly([int(batch_size / 2), block_length, 2])
-            # print(np.asarray(encoded_data).shape, np.asarray(random_data).shape)
+
             input_data = np.concatenate((np.asarray(encoded_data).reshape([int(batch_size / 2), block_length, 2])
                                          + np.random.normal(0, 0.1, size=([int(batch_size / 2), block_length, 2])),
                                          random_data), axis=0)
@@ -254,13 +241,12 @@ with tf.Session(config=config) as sess:
               "{:.3f}".format(acc))
 
         loss, acc = sess.run([loss_receiver_G, accuracy_G],
-                             feed_dict={X: batch_x, Z:  sample_Z([batch_size, block_length, Z_dim_c]),
+                             feed_dict={X: batch_x, Z: sample_Z([batch_size, block_length, Z_dim_c]),
                                         Noise_std: np.sqrt(1 / (2 * 2 * R * EbNo_train))
                                         })
         print("Generated Channel Evaluation:", "Step " + str(step) + ", Minibatch Loss= " + \
               "{:.4f}".format(loss) + ", Training Accuracy= " + \
               "{:.3f}".format(acc))
-
 
         EbNodB_range = np.arange(0, 8.5, 0.5)
         ber = np.ones(len(EbNodB_range))
